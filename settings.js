@@ -32,12 +32,12 @@ merge(settings, userSettings);
 logger.debug(settings);
 
 if (!fs.existsSync(settings.webroot + '/tts/')) {
-  fs.mkdirSync(settings.webroot + '/tts/');
+  fs.mkdirSync(settings.webroot + '/tts/', { recursive: true });
 }
 
 if (!fs.existsSync(settings.cacheDir)) {
   try {
-    fs.mkdirSync(settings.cacheDir);
+    fs.mkdirSync(settings.cacheDir, { recursive: true });
   } catch (err) {
     logger.warn(`Could not create cache directory ${settings.cacheDir}, please create it manually for all features to work.`);
   }

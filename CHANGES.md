@@ -12,8 +12,8 @@ This fork builds on jishi's widely-used `node-sonos-http-api` — a durable and
 elegantly simple project that has served the home automation community well for
 more than a decade. The goal here was to bring the codebase current: resolving
 accumulated security vulnerabilities, fixing bugs and reliability issues that
-emerged on Node 18+/20+, and modernising the code — without changing any
-user-facing behaviour. A full summary of changes follows.
+emerged on Node 18+/20+, and modernizing the code — without changing any
+user-facing behavior. A full summary of changes follows.
 
 ---
 

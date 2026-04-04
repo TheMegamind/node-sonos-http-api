@@ -1,6 +1,6 @@
 # TheMegamind/node-sonos-http-api
 
-This is an extensively refactored and modernised fork of
+This is an extensively refactored and modernized fork of
 [jishi/node-sonos-http-api](https://github.com/jishi/node-sonos-http-api),
 updated for compatibility with **Node 18–22**.
 

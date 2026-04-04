@@ -8,12 +8,12 @@ Node 20+ compatibility, code refactoring, and preset/grouping reliability.
 
 ## Overview
 
-The upstream project is largely unmaintained. Dependencies had accumulated
-17 npm audit vulnerabilities (including 2 critical), several dependencies had
-been deprecated or superseded, and the codebase contained a number of bugs
-and reliability issues that became more visible on Node 18+/20+. This fork
-addresses all of those while preserving full backward compatibility with
-existing `settings.json`, preset files, and API endpoints.
+This fork builds on jishi's widely-used `node-sonos-http-api` — a durable and
+elegantly simple project that has served the home automation community well for
+more than a decade. The goal here was to bring the codebase current: resolving
+accumulated security vulnerabilities, fixing bugs and reliability issues that
+emerged on Node 18+/20+, and modernising the code — without changing any
+user-facing behaviour. A full summary of changes follows.
 
 ---
 

@@ -204,3 +204,30 @@ function groupWithCoordinator(players) {
     }
   }
 }
+
+// ─── Patch 4: Guard against undefined coordinator in Player.js ───────────────
+// During rapid grouping, volume-change notifications can arrive while a player's
+// coordinator reference is transiently undefined (mid-topology-update).
+// _this.coordinator.recalculateGroupVolume() throws, logging an unhandled ERROR.
+// Fix: add a null guard so the call is skipped rather than crashing.
+
+const playerPath = path.join(baseDir, 'models', 'Player.js');
+
+if (!fs.existsSync(playerPath)) {
+  console.log('patch-sonos-discovery: Player.js not found, skipping patch 4');
+} else {
+  let src = fs.readFileSync(playerPath, 'utf8');
+
+  if (src.includes('if (_this.coordinator) _this.coordinator.recalculateGroupVolume')) {
+    console.log('patch-sonos-discovery: patch 4 (coordinator null guard) already applied, skipping');
+  } else if (!src.includes('_this.coordinator.recalculateGroupVolume()')) {
+    console.log('patch-sonos-discovery: patch 4 source pattern not found — may already be modified');
+  } else {
+    src = src.replace(
+      '      _this.coordinator.recalculateGroupVolume();',
+      '      if (_this.coordinator) _this.coordinator.recalculateGroupVolume();'
+    );
+    fs.writeFileSync(playerPath, src, 'utf8');
+    console.log('patch-sonos-discovery: patch 4 (coordinator null guard) applied successfully');
+  }
+}

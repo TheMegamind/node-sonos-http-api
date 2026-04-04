@@ -115,3 +115,119 @@ if (!fs.existsSync(applyPresetPath)) {
     }
   }
 }
+
+// ─── Patch 3: Retry + verify logic for groupWithCoordinator ──────────────────
+// groupWithCoordinator() used a plain serial reduce with no error handling.
+// If any single setAVTransport call timed out, that player was silently left
+// ungrouped with no retry. Fix: add per-join retry (500ms delay), then a
+// verification pass after all joins that re-attempts any stragglers.
+
+if (!fs.existsSync(applyPresetPath)) {
+  console.log('patch-sonos-discovery: applyPreset.js not found, skipping patch 3');
+} else {
+  let src = fs.readFileSync(applyPresetPath, 'utf8');
+
+  if (src.includes('joinPlayerToCoordinator')) {
+    console.log('patch-sonos-discovery: patch 3 (grouping retry) already applied, skipping');
+  } else {
+    const oldGroupWith = `function groupWithCoordinator(players) {
+  let initialPromise = Promise.resolve();
+  let coordinator = players[0];
+  let groupingUri = \`x-rincon:\${coordinator.uuid}\`;
+
+  // Skip first player since it is coordinator
+  return players.slice(1)
+    .reduce((promise, player) => {
+
+      if (player.avTransportUri === groupingUri) {
+        logger.debug(\`skipping grouping for \${player.roomName} because it is already grouped with coordinator\`);
+        return promise;
+      }
+
+      logger.debug(\`adding \${player.roomName} to coordinator \${coordinator.roomName}\`);
+      return promise.then(() => player.setAVTransport(groupingUri));
+    }, initialPromise);
+}`;
+
+    const newGroupWith = `// Join a single player to a coordinator, with one automatic retry on failure.
+function joinPlayerToCoordinator(player, groupingUri, retryDelayMs) {
+  return player.setAVTransport(groupingUri)
+    .catch((err) => {
+      logger.warn(\`grouping failed for \${player.roomName}, retrying in \${retryDelayMs}ms: \${err.message}\`);
+      return new Promise((resolve) => setTimeout(resolve, retryDelayMs))
+        .then(() => player.setAVTransport(groupingUri))
+        .catch((err2) => logger.warn(\`grouping retry failed for \${player.roomName}: \${err2.message}\`));
+    });
+}
+
+function groupWithCoordinator(players) {
+  const coordinator = players[0];
+  const groupingUri = \`x-rincon:\${coordinator.uuid}\`;
+  const RETRY_DELAY_MS = 500;
+
+  // Join players serially — Sonos rejects concurrent join requests to the
+  // same coordinator. Each join gets one automatic retry on failure.
+  const joinPromise = players.slice(1).reduce((promise, player) => {
+    if (player.avTransportUri === groupingUri) {
+      logger.debug(\`skipping grouping for \${player.roomName} because it is already grouped with coordinator\`);
+      return promise;
+    }
+
+    logger.debug(\`adding \${player.roomName} to coordinator \${coordinator.roomName}\`);
+    return promise.then(() => joinPlayerToCoordinator(player, groupingUri, RETRY_DELAY_MS));
+  }, Promise.resolve());
+
+  // After all joins, do a verification pass — retry any player that still
+  // isn't showing the correct grouping URI.
+  return joinPromise.then(() => {
+    const stragglers = players.slice(1).filter((player) => {
+      return player.avTransportUri !== groupingUri;
+    });
+
+    if (stragglers.length === 0) return Promise.resolve();
+
+    logger.warn(\`\${stragglers.length} player(s) not yet grouped after initial pass, retrying: \${stragglers.map(p => p.roomName).join(', ')}\`);
+
+    return new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS))
+      .then(() => stragglers.reduce((promise, player) => {
+        return promise.then(() => joinPlayerToCoordinator(player, groupingUri, RETRY_DELAY_MS));
+      }, Promise.resolve()));
+  });
+}`;
+
+    if (!src.includes(oldGroupWith)) {
+      console.log('patch-sonos-discovery: patch 3 source pattern not found — may already be modified');
+    } else {
+      src = src.replace(oldGroupWith, newGroupWith);
+      fs.writeFileSync(applyPresetPath, src, 'utf8');
+      console.log('patch-sonos-discovery: patch 3 (grouping retry) applied successfully');
+    }
+  }
+}
+
+// ─── Patch 4: Guard against undefined coordinator in Player.js ───────────────
+// During rapid grouping, volume-change notifications can arrive while a player's
+// coordinator reference is transiently undefined (mid-topology-update).
+// _this.coordinator.recalculateGroupVolume() throws, logging an unhandled ERROR.
+// Fix: add a null guard so the call is skipped rather than crashing.
+
+const playerPath = path.join(baseDir, 'models', 'Player.js');
+
+if (!fs.existsSync(playerPath)) {
+  console.log('patch-sonos-discovery: Player.js not found, skipping patch 4');
+} else {
+  let src = fs.readFileSync(playerPath, 'utf8');
+
+  if (src.includes('if (_this.coordinator) _this.coordinator.recalculateGroupVolume')) {
+    console.log('patch-sonos-discovery: patch 4 (coordinator null guard) already applied, skipping');
+  } else if (!src.includes('_this.coordinator.recalculateGroupVolume()')) {
+    console.log('patch-sonos-discovery: patch 4 source pattern not found — may already be modified');
+  } else {
+    src = src.replace(
+      '      _this.coordinator.recalculateGroupVolume();',
+      '      if (_this.coordinator) _this.coordinator.recalculateGroupVolume();'
+    );
+    fs.writeFileSync(playerPath, src, 'utf8');
+    console.log('patch-sonos-discovery: patch 4 (coordinator null guard) applied successfully');
+  }
+}

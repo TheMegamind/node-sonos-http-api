@@ -1,3 +1,39 @@
+# TheMegamind/node-sonos-http-api
+
+This is an extensively refactored and modernized fork of
+[jishi/node-sonos-http-api](https://github.com/jishi/node-sonos-http-api),
+updated for compatibility with **Node 18–22**.
+
+### What's different from upstream
+
+- **Security:** 17 npm audit vulnerabilities resolved (including 2 critical);
+  deprecated dependencies replaced with actively maintained alternatives
+- **Node 20+ compatibility:** HTTP keep-alive disabled for Sonos UPnP requests;
+  OpenSSL Blowfish cipher (dropped in Node 18+) replaced with a pure-JS
+  implementation, restoring Pandora support on modern Node
+- **Preset reliability:** Grouping operations now retry on timeout with a
+  verification pass; volume changes run in parallel; race conditions in
+  topology notifications fixed
+- **Code quality:** 27 bugs, reliability issues, and modernisation items
+  addressed; duplicated code extracted into shared helpers; ~750 lines
+  removed net
+
+See [CHANGES.md](CHANGES.md) for a full description of every change.
+
+### Installation
+
+Requires **Node 18 or higher**. The `postinstall` script automatically patches
+`sonos-discovery` after every `npm install` — no manual steps required.
+
+```bash
+git clone https://github.com/TheMegamind/node-sonos-http-api.git
+cd node-sonos-http-api
+npm install --production
+npm start
+```
+
+---
+
 [![PayPal donate button](https://img.shields.io/badge/paypal-donate-yellow.svg)](https://www.paypal.me/jishi "Donate once-off to this project using Paypal") [![Join the chat at gitter](https://img.shields.io/gitter/room/badges/shields.svg)](https://gitter.im/node-sonos-http-api/Lobby "Need assistance? Join the chat at Gitter.im") 
 
 ⚠WARNING!⚠

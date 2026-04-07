@@ -13,18 +13,14 @@ const serve = new serveStatic(settings.webroot);
 const discovery = new SonosSystem(settings);
 const api = new SonosHttpAPI(discovery, settings);
 
-var requestHandler = function (req, res) {
+const requestHandler = function (req, res) {
   req.addListener('end', function () {
     serve(req, res, function (err) {
-
-      // If error, route it.
-      // This bypasses authentication on static files!
-      //if (!err) {
-      //  return;
-      //}
+      // serve-static handles static files directly; if no file matched (err),
+      // fall through to the API request handler below.
 
       if (settings.auth) {
-        var credentials = auth(req);
+        const credentials = auth(req);
 
         if (!credentials || credentials.name !== settings.auth.username || credentials.pass !== settings.auth.password) {
           res.statusCode = 401;

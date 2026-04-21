@@ -37,11 +37,14 @@ if (!fs.existsSync(requestPath)) {
   }
 }
 
-// ─── Patch 2: Parallel volume setting in applyPreset.js ──────────────────────
+// ─── Patch 2: Parallel volume + settling delay in applyPreset.js ─────────────
 // setVolume() used a serial reduce chain — 5 players = 5 sequential round-trips.
 // On Node 20+ with tighter socket handling, one slow player times out the chain.
 // Fix: run all volume/mute changes in parallel with Promise.all, with individual
 // per-player catch so a single slow player doesn't abort the entire preset.
+// A 300ms settling delay follows Promise.all to prevent a race condition where
+// parallel RenderingControl traffic causes Sonos to eject group members when
+// a subsequent setPlayMode call arrives before players finish processing volumes.
 
 const applyPresetPath = path.join(baseDir, 'prototypes', 'SonosSystem', 'applyPreset.js');
 
@@ -50,10 +53,13 @@ if (!fs.existsSync(applyPresetPath)) {
 } else {
   let src = fs.readFileSync(applyPresetPath, 'utf8');
 
-  if (src.includes('Promise.all(promises)')) {
-    console.log('patch-sonos-discovery: patch 2 (parallel volume) already applied, skipping');
+  if (src.includes('setTimeout(resolve, 300)')) {
+    console.log('patch-sonos-discovery: patch 2 (parallel volume + settling delay) already applied, skipping');
   } else {
-    const oldSetVolume = `function setVolume(system, playerPresets) {
+    // Handle two possible source states:
+    // A) Original serial setVolume from npm package
+    // B) Earlier parallel version without the settling delay
+    const oldSetVolumeSerial = `function setVolume(system, playerPresets) {
   let initialPromise = Promise.resolve();
 
   return playerPresets.reduce((promise, playerInfo) => {
@@ -78,7 +84,18 @@ if (!fs.existsSync(applyPresetPath)) {
   }, initialPromise);
 }`;
 
-    const newSetVolume = `function setVolume(system, playerPresets) {
+    const oldSetVolumeParallel = `  return Promise.all(promises);
+}`;
+
+    const newSetVolumeParallel = `  // Settling delay: wait for Sonos players to finish processing parallel volume
+  // changes internally before any subsequent commands (e.g. setPlayMode) fire.
+  // Without this, concurrent RenderingControl traffic can cause the coordinator
+  // to interpret the overlap as a topology conflict and eject group members.
+  return Promise.all(promises)
+    .then(() => new Promise((resolve) => setTimeout(resolve, 300)));
+}`;
+
+    const newSetVolumeSerial = `function setVolume(system, playerPresets) {
   // Run volume/mute changes in parallel — they are independent per player.
   // A single slow player will no longer block or time out the entire preset.
   const promises = playerPresets.map((playerInfo) => {
@@ -103,15 +120,26 @@ if (!fs.existsSync(applyPresetPath)) {
     return promise;
   });
 
-  return Promise.all(promises);
+  // Settling delay: wait for Sonos players to finish processing parallel volume
+  // changes internally before any subsequent commands (e.g. setPlayMode) fire.
+  // Without this, concurrent RenderingControl traffic can cause the coordinator
+  // to interpret the overlap as a topology conflict and eject group members.
+  return Promise.all(promises)
+    .then(() => new Promise((resolve) => setTimeout(resolve, 300)));
 }`;
 
-    if (!src.includes(oldSetVolume)) {
-      console.log('patch-sonos-discovery: patch 2 source pattern not found — may already be modified');
-    } else {
-      src = src.replace(oldSetVolume, newSetVolume);
+    if (src.includes(oldSetVolumeSerial)) {
+      // Fresh from npm — apply full parallel + settling rewrite
+      src = src.replace(oldSetVolumeSerial, newSetVolumeSerial);
       fs.writeFileSync(applyPresetPath, src, 'utf8');
-      console.log('patch-sonos-discovery: patch 2 (parallel volume) applied successfully');
+      console.log('patch-sonos-discovery: patch 2 (parallel volume + settling delay) applied successfully');
+    } else if (src.includes(oldSetVolumeParallel)) {
+      // Already parallel but missing settling delay — add it
+      src = src.replace(oldSetVolumeParallel, newSetVolumeParallel);
+      fs.writeFileSync(applyPresetPath, src, 'utf8');
+      console.log('patch-sonos-discovery: patch 2 (settling delay) applied to existing parallel setVolume');
+    } else {
+      console.log('patch-sonos-discovery: patch 2 source pattern not found — manual inspection required');
     }
   }
 }

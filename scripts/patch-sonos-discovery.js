@@ -259,3 +259,28 @@ if (!fs.existsSync(playerPath)) {
     console.log('patch-sonos-discovery: patch 4 (coordinator null guard) applied successfully');
   }
 }
+// ─── Patch 5: Guard against undefined zone in recalculateGroupVolume.js ───────
+// recalculateGroupVolume() does this.system.zones.find(...) which returns
+// undefined when the zone hasn't been established yet during a topology update.
+// The subsequent zone.members access then throws. Add a null guard on zone.
+
+const recalcPath = path.join(baseDir, 'prototypes', 'Player', 'recalculateGroupVolume.js');
+
+if (!fs.existsSync(recalcPath)) {
+  console.log('patch-sonos-discovery: recalculateGroupVolume.js not found, skipping patch 5');
+} else {
+  let src = fs.readFileSync(recalcPath, 'utf8');
+
+  if (src.includes('if (!zone) return')) {
+    console.log('patch-sonos-discovery: patch 5 (zone null guard) already applied, skipping');
+  } else if (!src.includes('const zone = this.system.zones.find')) {
+    console.log('patch-sonos-discovery: patch 5 source pattern not found — may already be modified');
+  } else {
+    src = src.replace(
+      '  const zone = this.system.zones.find(zone => zone.uuid === this.uuid);\n  const relevantMembers = zone.members',
+      '  const zone = this.system.zones.find(zone => zone.uuid === this.uuid);\n  if (!zone) return;\n  const relevantMembers = zone.members'
+    );
+    fs.writeFileSync(recalcPath, src, 'utf8');
+    console.log('patch-sonos-discovery: patch 5 (zone null guard) applied successfully');
+  }
+}

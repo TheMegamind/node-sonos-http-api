@@ -57,12 +57,16 @@ over a reused socket to time out. Fix: inject `new http.Agent({ keepAlive: false
 into all outgoing UPnP requests. Equivalent to the fix in the unpublished
 `v1.8.0` GitHub tag of `sonos-discovery`.
 
-### Patch 2 — Parallel volume setting (`sonos-discovery/lib/prototypes/SonosSystem/applyPreset.js`)
+### Patch 2 — Parallel volume setting + settling delay (`sonos-discovery/lib/prototypes/SonosSystem/applyPreset.js`)
 `setVolume()` used a serial reduce chain — with 5 players this meant 5
 sequential UPnP round-trips. One slow player could time out the entire chain.
 Fix: replaced with `Promise.all()` so all volume/mute changes run in parallel,
 with individual per-player catches so a single slow player logs a warning
-rather than aborting the preset.
+rather than aborting the preset. A 300ms settling delay is added after
+`Promise.all` resolves to prevent a race condition where subsequent commands
+(e.g. `setPlayMode`) arrive at the coordinator while it is still processing
+the parallel volume events — without this delay, Sonos interprets the overlap
+as a topology conflict and ejects group members.
 
 ### Patch 3 — Grouping retry and verify (`sonos-discovery/lib/prototypes/SonosSystem/applyPreset.js`)
 `groupWithCoordinator()` had no error handling — a single `setAVTransport`
@@ -78,6 +82,12 @@ During rapid grouping, volume-change notifications can arrive while a player's
 `_this.coordinator.recalculateGroupVolume()` threw a `TypeError` logged as
 an unhandled error. Fix: simple null guard so the call is skipped rather than
 crashing.
+
+### Patch 5 — Zone null guard (`sonos-discovery/lib/prototypes/Player/recalculateGroupVolume.js`)
+`recalculateGroupVolume()` calls `this.system.zones.find()` to locate the
+player's zone. During a topology update the zone may not yet exist, returning
+`undefined`. The subsequent access to `zone.members` throws a `TypeError`
+that floods the error log. Fix: early return if `zone` is undefined.
 
 ---
 
@@ -146,7 +156,7 @@ crashing.
 | `lib/helpers/save-all-zones.js` | Shared zone snapshot helper for announcement restore logic |
 | `lib/helpers/shuffle.js` | Pure Fisher-Yates shuffle; does not mutate input or global `Array.prototype` |
 | `lib/helpers/tts-cache.js` | Shared TTS file-cache helper eliminating copy-paste across all six TTS providers |
-| `scripts/patch-sonos-discovery.js` | Post-install patcher applying four fixes to `sonos-discovery@1.7.3` that are present in the unpublished `v1.8.0` tag or were introduced by this fork. Runs automatically via the `postinstall` npm hook. Idempotent |
+| `scripts/patch-sonos-discovery.js` | Post-install patcher applying five fixes to `sonos-discovery@1.7.3` that are present in the unpublished `v1.8.0` tag or were introduced by this fork. Runs automatically via the `postinstall` npm hook. Idempotent |
 
 ---
 

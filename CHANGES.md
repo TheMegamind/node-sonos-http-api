@@ -122,10 +122,51 @@ that floods the error log. Fix: early return if `zone` is undefined.
 - **`sonos-http-api.js`** — `invokeWebhook` called `JSON.stringify()` without error handling. During topology changes, `Player.toJSON()` can access a transiently `undefined` coordinator, throwing a `TypeError`. Wrapped in `try/catch`; serialization failures are logged at debug level and the notification is skipped.
 - **`mac-os.js`** — `exec()` with a string command was vulnerable to shell injection if the TTS phrase contained double-quotes or backticks. Replaced with `execFile()` and an arguments array.
 - **`settings.js`** — `fs.mkdirSync()` calls lacked `{ recursive: true }`, which would throw if intermediate directories didn't exist.
+- **`presets-loader.js`** — `readPresetsFromFile()` used `require()` to load
+  `presets.json`, which Node caches on first load. Subsequent reloads triggered
+  by the file watcher silently returned the cached module, ignoring any changes.
+  Replaced with `tryLoadJson()` — already used for directory-based presets —
+  which reads and parses the file fresh on every call.
+- **`preset-announcement.js`** / **`all-player-announcement.js`** —
+  `coordinator.play()` was called without returning its Promise. A rejected
+  `play()` was silently swallowed; the helper then waited for a `STOPPED`
+  transport-state event that would never arrive, falling through to the abort
+  timer (`duration + 2000ms`) before restoring. `play()` is now returned into
+  the chain so failures propagate to the outer catch.
+- **`preset-announcement.js`** / **`all-player-announcement.js`** —
+  `oneGroupPromise` unconditionally registered a `topology-change` listener and
+  started a 10-second timeout at construction. When topology was already correct
+  at the check point, the promise was bypassed but neither the listener nor the
+  timer were cleaned up. The timer would fire 10 seconds later calling `reject()`
+  on an already-settled Promise, and the listener would silently consume the next
+  topology-change event. Added `abortTopologyWait()` to cancel both when the
+  topology check short-circuits.
 
 ### Reliability
 - **`try-download-tts.js`** — If all TTS providers returned `undefined` (none configured, or all failed silently), the chain resolved with `undefined` and caused a confusing crash downstream. Now rejects explicitly with a clear error message.
 - **`pauseall.js`** — A second `pauseall` call before `resumeall` silently discarded the first pause state. Now logs a warning when called while already paused.
+- **`preset-announcement.js`** / **`all-player-announcement.js`** — The restore
+  loop applied `applyPreset` calls back-to-back with no gap. Each call triggers
+  topology-change events that can interfere with the next — the same race
+  condition Patch 2 addresses. Added a 300ms settling delay between each restore
+  step, consistent with the patch approach.
+- **`preset-announcement.js`** — Added a guard at function entry that rejects
+  immediately with a clear error if `preset.players` is empty or missing. Without
+  it, `preset.players[0].roomName` would throw a `TypeError` during the topology
+  check.
+- **`all-player-announcement.js`** — Added a guard at function entry that rejects
+  immediately with a clear error if `system.zones` is empty. Without it,
+  `biggestZone.coordinator` would be `undefined` and crash on `.roomName`.
+- **`preset-announcement.js`** / **`all-player-announcement.js`** /
+  **`single-player-announcement.js`** — The transport-state `STOPPED` listener
+  was deferred by `duration / 2` ms to filter false positives at playback start.
+  For clips longer than ~1 second this deaf window could outlast the clip,
+  causing the helper to miss end-of-playback and fall through to the abort timer.
+  Capped at `Math.min(duration / 2, 500)` ms.
+- **`save-all-zones.js`** — `state.trackNo` and `state.elapsedTime` were
+  `undefined` when a player was in a transitional state or the queue was empty,
+  and were silently omitted from the serialized preset. Both now default to `0`
+  so `applyPreset` always receives defined numeric values.
 
 ### Deduplication
 - **`lib/helpers/save-all-zones.js`** (new) — Extracted the identical `saveAll()` function that existed in both `all-player-announcement.js` and `preset-announcement.js`.
@@ -164,7 +205,15 @@ that floods the error log. Fix: early return if `zone` is undefined.
 
 - **`music-metadata` capped at v7.14.0** — v8 and above switched to ESM-only modules, which are incompatible with this CommonJS codebase without a broader migration. npm audit will flag this as a vulnerability but no CVE exists against v7.14.0 specifically.
 - **`got` capped at v11.8.6** — Same reason; v12+ is ESM-only.
-- **`sayall` reliability** — The `sayall`/`clipall` commands group all players into a single zone, play the announcement, then attempt to restore the previous topology. This restore step uses `sonos-discovery`'s `applyPreset`, which can fail under the same timeout conditions described above. The 10-second topology timeout (added in this fork) prevents indefinite hangs, but `sayall` remains less reliable than single-player `say` due to the complexity of full-system grouping and restore.
+- **`sayall` reliability** — The `sayall`/`clipall` commands group all players
+  into a single zone, play the announcement, then restore the previous topology.
+  Several reliability improvements have been applied in this fork: a 10-second
+  topology timeout prevents indefinite hangs; `play()` failures now propagate
+  rather than being silently swallowed; orphaned event listeners and timers are
+  cleaned up when topology is already correct; and a 300ms settling delay between
+  restore steps reduces race conditions. Despite these improvements, `sayall`
+  remains inherently less reliable than single-player `say` due to the complexity
+  of full-system grouping and restore.
 - **`sonos-discovery` patches** — Rather than forking `sonos-discovery`, fixes are applied post-install via `scripts/patch-sonos-discovery.js`. This is pragmatic but means the patches must be re-verified if `sonos-discovery` is ever upgraded.
 - **Pandora** — The Pandora API uses Blowfish encryption, which was removed from OpenSSL 3 (Node 18+). This fork restores Pandora functionality using the pure-JS `blowfish-node` library. However, Pandora's JSON API itself is unofficial and may change or be discontinued at any time.
 - **Microsoft TTS** — The Microsoft Cognitive Services (Bing Speech) API used by this provider is legacy and may no longer be available to new registrations.
